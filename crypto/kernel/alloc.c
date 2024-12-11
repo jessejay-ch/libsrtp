@@ -49,10 +49,12 @@
 #include "alloc.h"
 #include "crypto_kernel.h"
 
+#include <stdlib.h>
+
 /* the debug module for memory allocation */
 
 srtp_debug_module_t srtp_mod_alloc = {
-    0,      /* debugging is off by default */
+    false,  /* debugging is off by default */
     "alloc" /* printable name for module   */
 };
 
@@ -64,8 +66,6 @@ srtp_debug_module_t srtp_mod_alloc = {
  * grepping for 'alloc', then matching alloc and free calls by
  * address.
  */
-
-#if defined(HAVE_STDLIB_H)
 
 void *srtp_crypto_alloc(size_t size)
 {
@@ -93,9 +93,3 @@ void srtp_crypto_free(void *ptr)
 
     free(ptr);
 }
-
-#else /* we need to define our own memory allocation routines */
-
-#error no memory allocation defined yet
-
-#endif
