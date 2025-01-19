@@ -22,9 +22,9 @@ foreach t : test_apps
 
   test_exe = executable(test_name,
     '@0@.c'.format(test_name), 'getopt_s.c', test_extra_sources,
-    include_directories: [config_incs, crypto_incs, srtp2_incs, test_incs],
-    dependencies: [srtp2_deps, syslibs],
-    link_with: libsrtp2_for_tests)
+    include_directories: [config_incs, crypto_incs, srtp3_incs, test_incs],
+    dependencies: [srtp3_deps, syslibs],
+    link_with: libsrtp3_for_tests)
 
   if test_dict.get('define_test', true)
     test(test_name, test_exe, args: test_run_args)
@@ -54,7 +54,7 @@ if can_run_rtpw
   endif
 
   rtpw_test_gcm_sh = find_program('rtpw_test_gcm.sh', required: false)
-  if (use_openssl or use_nss) and rtpw_test_gcm_sh.found()
+  if (use_openssl or use_wolfssl or use_nss or use_mbedtls) and rtpw_test_gcm_sh.found()
     test('rtpw_test_gcm', rtpw_test_gcm_sh,
          args: ['-w', words_txt],
          depends: rtpw_exe,
@@ -70,8 +70,8 @@ if pcap_dep.found()
   executable('rtp_decoder',
     'rtp_decoder.c', 'getopt_s.c', 'rtp.c', 'util.c', 'getopt_s.c',
     '../crypto/math/datatypes.c',
-    include_directories: [config_incs, crypto_incs, srtp2_incs, test_incs],
-    dependencies: [srtp2_deps, pcap_dep, syslibs],
-    link_with: libsrtp2,
+    include_directories: [config_incs, crypto_incs, srtp3_incs, test_incs],
+    dependencies: [srtp3_deps, pcap_dep, syslibs],
+    link_with: libsrtp3,
     install: false)
 endif

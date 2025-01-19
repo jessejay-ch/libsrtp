@@ -47,11 +47,15 @@
 #include <config.h>
 #endif
 
-#include <stdio.h> /* for printf() */
 #include "getopt_s.h"
 #include "cipher.h"
 #include "cipher_priv.h"
 #include "datatypes.h"
+#include "alloc.h"
+#include "util.h"
+
+#include <stdio.h>
+#include <stdlib.h>
 
 #define PRINT_DEBUG 0
 
@@ -59,9 +63,13 @@ void cipher_driver_test_throughput(srtp_cipher_t *c);
 
 srtp_err_status_t cipher_driver_self_test(srtp_cipher_type_t *ct);
 
+srtp_err_status_t cipher_driver_test_api(srtp_cipher_type_t *ct,
+                                         size_t key_len,
+                                         size_t tag_len);
+
 /*
  * cipher_driver_test_buffering(ct) tests the cipher's output
- * buffering for correctness by checking the consistency of succesive
+ * buffering for correctness by checking the consistency of successive
  * calls
  */
 
@@ -71,37 +79,28 @@ srtp_err_status_t cipher_driver_test_buffering(srtp_cipher_t *c);
  * functions for testing cipher cache thrash
  */
 srtp_err_status_t cipher_driver_test_array_throughput(srtp_cipher_type_t *ct,
-                                                      int klen,
-                                                      int num_cipher);
+                                                      size_t klen,
+                                                      size_t num_cipher);
 
-void cipher_array_test_throughput(srtp_cipher_t *ca[], int num_cipher);
+void cipher_array_test_throughput(srtp_cipher_t *ca[], size_t num_cipher);
 
 uint64_t cipher_array_bits_per_second(srtp_cipher_t *cipher_array[],
-                                      int num_cipher,
-                                      unsigned octets_in_buffer,
-                                      int num_trials);
+                                      size_t num_cipher,
+                                      size_t octets_in_buffer,
+                                      size_t num_trials);
 
 srtp_err_status_t cipher_array_delete(srtp_cipher_t *cipher_array[],
-                                      int num_cipher);
+                                      size_t num_cipher);
 
 srtp_err_status_t cipher_array_alloc_init(srtp_cipher_t ***cipher_array,
-                                          int num_ciphers,
+                                          size_t num_ciphers,
                                           srtp_cipher_type_t *ctype,
-                                          int klen);
+                                          size_t klen);
 
 void usage(char *prog_name)
 {
     printf("usage: %s [ -t | -v | -a ]\n", prog_name);
     exit(255);
-}
-
-void check_status(srtp_err_status_t s)
-{
-    if (s) {
-        printf("error (code %d)\n", s);
-        exit(s);
-    }
-    return;
 }
 
 /*
@@ -124,7 +123,7 @@ int main(int argc, char *argv[])
     srtp_cipher_t *c = NULL;
     srtp_err_status_t status;
     /* clang-format off */
-    unsigned char test_key[48] = {
+    uint8_t test_key[48] = {
         0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
         0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
         0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
@@ -134,24 +133,25 @@ int main(int argc, char *argv[])
     };
     /* clang-format on */
     int q;
-    unsigned do_timing_test = 0;
-    unsigned do_validation = 0;
-    unsigned do_array_timing_test = 0;
+    bool do_timing_test = false;
+    bool do_validation = false;
+    bool do_array_timing_test = false;
 
     /* process input arguments */
     while (1) {
         q = getopt_s(argc, argv, "tva");
-        if (q == -1)
+        if (q == -1) {
             break;
+        }
         switch (q) {
         case 't':
-            do_timing_test = 1;
+            do_timing_test = true;
             break;
         case 'v':
-            do_validation = 1;
+            do_validation = true;
             break;
         case 'a':
-            do_array_timing_test = 1;
+            do_array_timing_test = true;
             break;
         default:
             usage(argv[0]);
@@ -162,30 +162,35 @@ int main(int argc, char *argv[])
            "David A. McGrew\n"
            "Cisco Systems, Inc.\n");
 
-    if (!do_validation && !do_timing_test && !do_array_timing_test)
+    if (!do_validation && !do_timing_test && !do_array_timing_test) {
         usage(argv[0]);
+    }
 
-    /* arry timing (cache thrash) test */
+    /* array timing (cache thrash) test */
     if (do_array_timing_test) {
-        int max_num_cipher = 1 << 16; /* number of ciphers in cipher_array */
-        int num_cipher;
+        size_t max_num_cipher = 1 << 16; /* number of ciphers in cipher_array */
+        size_t num_cipher;
 
-        for (num_cipher = 1; num_cipher < max_num_cipher; num_cipher *= 8)
+        for (num_cipher = 1; num_cipher < max_num_cipher; num_cipher *= 8) {
             cipher_driver_test_array_throughput(&srtp_null_cipher, 0,
                                                 num_cipher);
+        }
 
-        for (num_cipher = 1; num_cipher < max_num_cipher; num_cipher *= 8)
+        for (num_cipher = 1; num_cipher < max_num_cipher; num_cipher *= 8) {
             cipher_driver_test_array_throughput(
                 &srtp_aes_icm_128, SRTP_AES_ICM_128_KEY_LEN_WSALT, num_cipher);
+        }
 
-        for (num_cipher = 1; num_cipher < max_num_cipher; num_cipher *= 8)
+        for (num_cipher = 1; num_cipher < max_num_cipher; num_cipher *= 8) {
             cipher_driver_test_array_throughput(
                 &srtp_aes_icm_256, SRTP_AES_ICM_256_KEY_LEN_WSALT, num_cipher);
+        }
 
 #ifdef GCM
-        for (num_cipher = 1; num_cipher < max_num_cipher; num_cipher *= 8)
+        for (num_cipher = 1; num_cipher < max_num_cipher; num_cipher *= 8) {
             cipher_driver_test_array_throughput(
                 &srtp_aes_icm_192, SRTP_AES_ICM_192_KEY_LEN_WSALT, num_cipher);
+        }
 
         for (num_cipher = 1; num_cipher < max_num_cipher; num_cipher *= 8) {
             cipher_driver_test_array_throughput(
@@ -208,23 +213,30 @@ int main(int argc, char *argv[])
         cipher_driver_self_test(&srtp_aes_gcm_128);
         cipher_driver_self_test(&srtp_aes_gcm_256);
 #endif
+        cipher_driver_test_api(&srtp_aes_icm_128,
+                               SRTP_AES_ICM_128_KEY_LEN_WSALT, 0);
+#ifdef GCM
+        cipher_driver_test_api(&srtp_aes_gcm_128,
+                               SRTP_AES_GCM_128_KEY_LEN_WSALT, 16);
+#endif
     }
 
     /* do timing and/or buffer_test on srtp_null_cipher */
     status = srtp_cipher_type_alloc(&srtp_null_cipher, &c, 0, 0);
-    check_status(status);
+    CHECK_OK(status);
 
     status = srtp_cipher_init(c, NULL);
-    check_status(status);
+    CHECK_OK(status);
 
-    if (do_timing_test)
+    if (do_timing_test) {
         cipher_driver_test_throughput(c);
+    }
     if (do_validation) {
         status = cipher_driver_test_buffering(c);
-        check_status(status);
+        CHECK_OK(status);
     }
     status = srtp_cipher_dealloc(c);
-    check_status(status);
+    CHECK_OK(status);
 
     /* run the throughput test on the aes_icm cipher (128-bit key) */
     status = srtp_cipher_type_alloc(&srtp_aes_icm_128, &c,
@@ -235,18 +247,19 @@ int main(int argc, char *argv[])
     }
 
     status = srtp_cipher_init(c, test_key);
-    check_status(status);
+    CHECK_OK(status);
 
-    if (do_timing_test)
+    if (do_timing_test) {
         cipher_driver_test_throughput(c);
+    }
 
     if (do_validation) {
         status = cipher_driver_test_buffering(c);
-        check_status(status);
+        CHECK_OK(status);
     }
 
     status = srtp_cipher_dealloc(c);
-    check_status(status);
+    CHECK_OK(status);
 
     /* repeat the tests with 256-bit keys */
     status = srtp_cipher_type_alloc(&srtp_aes_icm_256, &c,
@@ -257,18 +270,19 @@ int main(int argc, char *argv[])
     }
 
     status = srtp_cipher_init(c, test_key);
-    check_status(status);
+    CHECK_OK(status);
 
-    if (do_timing_test)
+    if (do_timing_test) {
         cipher_driver_test_throughput(c);
+    }
 
     if (do_validation) {
         status = cipher_driver_test_buffering(c);
-        check_status(status);
+        CHECK_OK(status);
     }
 
     status = srtp_cipher_dealloc(c);
-    check_status(status);
+    CHECK_OK(status);
 
 #ifdef GCM
     /* run the throughput test on the aes_gcm_128 cipher */
@@ -279,7 +293,7 @@ int main(int argc, char *argv[])
         exit(status);
     }
     status = srtp_cipher_init(c, test_key);
-    check_status(status);
+    CHECK_OK(status);
     if (do_timing_test) {
         cipher_driver_test_throughput(c);
     }
@@ -287,7 +301,7 @@ int main(int argc, char *argv[])
     // GCM ciphers don't do buffering; they're "one shot"
 
     status = srtp_cipher_dealloc(c);
-    check_status(status);
+    CHECK_OK(status);
 
     /* run the throughput test on the aes_gcm_256 cipher */
     status = srtp_cipher_type_alloc(&srtp_aes_gcm_256, &c,
@@ -297,7 +311,7 @@ int main(int argc, char *argv[])
         exit(status);
     }
     status = srtp_cipher_init(c, test_key);
-    check_status(status);
+    CHECK_OK(status);
     if (do_timing_test) {
         cipher_driver_test_throughput(c);
     }
@@ -305,7 +319,7 @@ int main(int argc, char *argv[])
     // GCM ciphers don't do buffering; they're "one shot"
 
     status = srtp_cipher_dealloc(c);
-    check_status(status);
+    CHECK_OK(status);
 #endif
 
     return 0;
@@ -313,17 +327,23 @@ int main(int argc, char *argv[])
 
 void cipher_driver_test_throughput(srtp_cipher_t *c)
 {
-    int i;
-    int min_enc_len = 32;
-    int max_enc_len = 2048; /* should be a power of two */
-    int num_trials = 1000000;
+    size_t min_enc_len = 32;
+    size_t max_enc_len = 2048; /* should be a power of two */
+    size_t num_trials = 1000000;
 
-    printf("timing %s throughput, key length %d:\n", c->type->description,
+    printf("timing %s throughput, key length %zu:\n", c->type->description,
            c->key_len);
     fflush(stdout);
-    for (i = min_enc_len; i <= max_enc_len; i = i * 2)
-        printf("msg len: %d\tgigabits per second: %f\n", i,
-               srtp_cipher_bits_per_second(c, i, num_trials) / 1e9);
+    for (size_t i = min_enc_len; i <= max_enc_len; i = i * 2) {
+        uint64_t bits_per_second =
+            srtp_cipher_bits_per_second(c, i, num_trials);
+        if (bits_per_second == 0) {
+            printf("error: throughput test failed\n");
+            exit(1);
+        }
+        printf("msg len: %zu\tgigabits per second: %f\n", i,
+               bits_per_second / 1e9);
+    }
 }
 
 srtp_err_status_t cipher_driver_self_test(srtp_cipher_type_t *ct)
@@ -332,10 +352,169 @@ srtp_err_status_t cipher_driver_self_test(srtp_cipher_type_t *ct)
 
     printf("running cipher self-test for %s...", ct->description);
     status = srtp_cipher_type_self_test(ct);
-    if (status) {
-        printf("failed with error code %d\n", status);
-        exit(status);
+    CHECK_OK(status);
+    printf("passed\n");
+
+    return srtp_err_status_ok;
+}
+
+void reint_cipher(srtp_cipher_t *c,
+                  uint8_t *test_key,
+                  uint8_t *iv,
+                  srtp_cipher_direction_t direction)
+{
+    srtp_err_status_t status = srtp_cipher_init(c, test_key);
+    CHECK_OK(status);
+
+    status = srtp_cipher_set_iv(c, iv, direction);
+    CHECK_OK(status);
+}
+
+srtp_err_status_t cipher_driver_test_api(srtp_cipher_type_t *ct,
+                                         size_t key_len,
+                                         size_t tag_len)
+{
+    srtp_err_status_t status;
+    srtp_cipher_t *c = NULL;
+
+    /* clang-format off */
+    uint8_t test_key[48] = {
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+        0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
+        0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+        0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
+        0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
+        0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f,
+    };
+    uint8_t iv[16] = {
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+        0x08, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f};
+    uint8_t plaintext[64] = {
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+    };
+    uint8_t encrypted[96] = {0};
+    uint8_t decrypted[96] = {0};
+    /* clang-format on */
+
+    printf("testing cipher api for %s...", ct->description);
+    fflush(stdout);
+
+    if (key_len > sizeof(test_key)) {
+        return srtp_err_status_bad_param;
     }
+
+    status = srtp_cipher_type_alloc(ct, &c, key_len, tag_len);
+    CHECK_OK(status);
+
+    status = srtp_cipher_init(c, test_key);
+    CHECK_OK(status);
+
+    status = srtp_cipher_set_iv(c, iv, srtp_direction_encrypt);
+    CHECK_OK(status);
+
+    size_t src_len;
+    size_t dst_len;
+
+    // test dst len zero
+    src_len = sizeof(plaintext);
+    dst_len = 0;
+    status = srtp_cipher_encrypt(c, plaintext, src_len, encrypted, &dst_len);
+    CHECK_RETURN(status, srtp_err_status_buffer_small);
+
+    reint_cipher(c, test_key, iv, srtp_direction_encrypt);
+
+    // test dst len smaller than expected
+    src_len = sizeof(plaintext);
+    dst_len = src_len + tag_len - 1;
+    status = srtp_cipher_encrypt(c, plaintext, src_len, encrypted, &dst_len);
+    CHECK_RETURN(status, srtp_err_status_buffer_small);
+
+    reint_cipher(c, test_key, iv, srtp_direction_encrypt);
+
+    // test dst len exact size
+    src_len = sizeof(plaintext);
+    dst_len = src_len + tag_len;
+    status = srtp_cipher_encrypt(c, plaintext, src_len, encrypted, &dst_len);
+    CHECK_OK(status);
+    CHECK(dst_len == src_len + tag_len);
+
+    reint_cipher(c, test_key, iv, srtp_direction_encrypt);
+
+    // dst len larger than src len
+    src_len = sizeof(plaintext);
+    dst_len = sizeof(encrypted);
+    status = srtp_cipher_encrypt(c, plaintext, src_len, encrypted, &dst_len);
+    CHECK_OK(status);
+    CHECK(dst_len == src_len + tag_len);
+
+    reint_cipher(c, test_key, iv, srtp_direction_encrypt);
+
+    size_t encrypted_len = dst_len;
+
+    // init for decrypt
+    status = srtp_cipher_init(c, test_key);
+    CHECK_OK(status);
+
+    status = srtp_cipher_set_iv(c, iv, srtp_direction_decrypt);
+    CHECK_OK(status);
+
+    if (tag_len != 0) {
+        // test src less than tag len
+        src_len = tag_len - 1;
+        dst_len = sizeof(decrypted);
+        status =
+            srtp_cipher_decrypt(c, encrypted, src_len, decrypted, &dst_len);
+        CHECK_RETURN(status, srtp_err_status_bad_param);
+
+        reint_cipher(c, test_key, iv, srtp_direction_decrypt);
+    }
+
+    // test dst len zero
+    src_len = encrypted_len;
+    dst_len = 0;
+    status = srtp_cipher_decrypt(c, encrypted, src_len, decrypted, &dst_len);
+    CHECK_RETURN(status, srtp_err_status_buffer_small);
+
+    reint_cipher(c, test_key, iv, srtp_direction_decrypt);
+
+    // test dst len smaller than expected
+    src_len = encrypted_len;
+    dst_len = src_len - tag_len - 1;
+    status = srtp_cipher_decrypt(c, encrypted, src_len, decrypted, &dst_len);
+    CHECK_RETURN(status, srtp_err_status_buffer_small);
+
+    reint_cipher(c, test_key, iv, srtp_direction_decrypt);
+
+    // test dst len exact
+    src_len = encrypted_len;
+    dst_len = src_len - tag_len;
+    status = srtp_cipher_decrypt(c, encrypted, src_len, decrypted, &dst_len);
+    CHECK_OK(status);
+    CHECK(dst_len == sizeof(plaintext));
+    CHECK_BUFFER_EQUAL(plaintext, decrypted, sizeof(plaintext));
+
+    reint_cipher(c, test_key, iv, srtp_direction_decrypt);
+
+    // dst len larger than src len
+    src_len = encrypted_len;
+    dst_len = sizeof(decrypted);
+    status = srtp_cipher_decrypt(c, encrypted, src_len, decrypted, &dst_len);
+    CHECK_OK(status);
+    CHECK(dst_len == sizeof(plaintext));
+    CHECK_BUFFER_EQUAL(plaintext, decrypted, sizeof(plaintext));
+
+    reint_cipher(c, test_key, iv, srtp_direction_decrypt);
+
+    status = srtp_cipher_dealloc(c);
+    CHECK_OK(status);
+
     printf("passed\n");
 
     return srtp_err_status_ok;
@@ -343,15 +522,15 @@ srtp_err_status_t cipher_driver_self_test(srtp_cipher_type_t *ct)
 
 /*
  * cipher_driver_test_buffering(ct) tests the cipher's output
- * buffering for correctness by checking the consistency of succesive
+ * buffering for correctness by checking the consistency of successive
  * calls
  */
 
 #define INITIAL_BUFLEN 1024
 srtp_err_status_t cipher_driver_test_buffering(srtp_cipher_t *c)
 {
-    int i, j, num_trials = 1000;
-    unsigned len, buflen = INITIAL_BUFLEN;
+    size_t num_trials = 1000;
+    size_t len, buflen = INITIAL_BUFLEN;
     uint8_t buffer0[INITIAL_BUFLEN], buffer1[INITIAL_BUFLEN], *current, *end;
     uint8_t idx[16] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x12, 0x34 };
@@ -359,26 +538,29 @@ srtp_err_status_t cipher_driver_test_buffering(srtp_cipher_t *c)
 
     printf("testing output buffering for cipher %s...", c->type->description);
 
-    for (i = 0; i < num_trials; i++) {
+    for (size_t i = 0; i < num_trials; i++) {
         /* set buffers to zero */
-        for (j = 0; j < (int)buflen; j++) {
+        for (size_t j = 0; j < buflen; j++) {
             buffer0[j] = buffer1[j] = 0;
         }
 
         /* initialize cipher  */
-        status = srtp_cipher_set_iv(c, (uint8_t *)idx, srtp_direction_encrypt);
-        if (status)
+        status = srtp_cipher_set_iv(c, idx, srtp_direction_encrypt);
+        if (status) {
             return status;
+        }
 
         /* generate 'reference' value by encrypting all at once */
-        status = srtp_cipher_encrypt(c, buffer0, &buflen);
-        if (status)
+        status = srtp_cipher_encrypt(c, buffer0, buflen, buffer0, &buflen);
+        if (status) {
             return status;
+        }
 
         /* re-initialize cipher */
-        status = srtp_cipher_set_iv(c, (uint8_t *)idx, srtp_direction_encrypt);
-        if (status)
+        status = srtp_cipher_set_iv(c, idx, srtp_direction_encrypt);
+        if (status) {
             return status;
+        }
 
         /* now loop over short lengths until buffer1 is encrypted */
         current = buffer1;
@@ -388,34 +570,26 @@ srtp_err_status_t cipher_driver_test_buffering(srtp_cipher_t *c)
             len = srtp_cipher_rand_u32_for_tests() & 0x01f;
 
             /* make sure that len doesn't cause us to overreach the buffer */
-            if (current + len > end)
-                len = (unsigned)(end - current);
+            if (current + len > end) {
+                len = end - current;
+            }
 
-            status = srtp_cipher_encrypt(c, current, &len);
-            if (status)
+            status = srtp_cipher_encrypt(c, current, len, current, &len);
+            if (status) {
                 return status;
+            }
 
             /* advance pointer into buffer1 to reflect encryption */
             current += len;
 
             /* if buffer1 is all encrypted, break out of loop */
-            if (current == end)
+            if (current == end) {
                 break;
+            }
         }
 
         /* compare buffers */
-        for (j = 0; j < (int)buflen; j++) {
-            if (buffer0[j] != buffer1[j]) {
-#if PRINT_DEBUG
-                printf("test case %d failed at byte %d\n", i, j);
-                printf("computed: %s\n",
-                       octet_string_hex_string(buffer1, buflen));
-                printf("expected: %s\n",
-                       octet_string_hex_string(buffer0, buflen));
-#endif
-                return srtp_err_status_algo_fail;
-            }
-        }
+        CHECK_BUFFER_EQUAL(buffer0, buffer1, buflen);
     }
 
     printf("passed\n");
@@ -432,48 +606,53 @@ srtp_err_status_t cipher_driver_test_buffering(srtp_cipher_t *c)
  */
 
 srtp_err_status_t cipher_array_alloc_init(srtp_cipher_t ***ca,
-                                          int num_ciphers,
+                                          size_t num_ciphers,
                                           srtp_cipher_type_t *ctype,
-                                          int klen)
+                                          size_t klen)
 {
-    int i, j;
     srtp_err_status_t status;
-    uint8_t *key;
+    uint8_t *key = NULL;
     srtp_cipher_t **cipher_array;
     /* pad klen allocation, to handle aes_icm reading 16 bytes for the
        14-byte salt */
-    int klen_pad = ((klen + 15) >> 4) << 4;
+    size_t klen_pad = ((klen + 15) >> 4) << 4;
 
     /* allocate array of pointers to ciphers */
     cipher_array = (srtp_cipher_t **)srtp_crypto_alloc(sizeof(srtp_cipher_t *) *
                                                        num_ciphers);
-    if (cipher_array == NULL)
+    if (cipher_array == NULL) {
         return srtp_err_status_alloc_fail;
+    }
 
     /* set ca to location of cipher_array */
     *ca = cipher_array;
 
-    /* allocate key */
-    key = srtp_crypto_alloc(klen_pad);
-    if (key == NULL) {
-        srtp_crypto_free(cipher_array);
-        return srtp_err_status_alloc_fail;
+    /* allocate key , allow zero key for example null cipher */
+    if (klen_pad > 0) {
+        key = srtp_crypto_alloc(klen_pad);
+        if (key == NULL) {
+            srtp_crypto_free(cipher_array);
+            return srtp_err_status_alloc_fail;
+        }
     }
 
     /* allocate and initialize an array of ciphers */
-    for (i = 0; i < num_ciphers; i++) {
+    for (size_t i = 0; i < num_ciphers; i++) {
         /* allocate cipher */
         status = srtp_cipher_type_alloc(ctype, cipher_array, klen, 16);
-        if (status)
+        if (status) {
             return status;
+        }
 
         /* generate random key and initialize cipher */
         srtp_cipher_rand_for_tests(key, klen);
-        for (j = klen; j < klen_pad; j++)
+        for (size_t j = klen; j < klen_pad; j++) {
             key[j] = 0;
+        }
         status = srtp_cipher_init(*cipher_array, key);
-        if (status)
+        if (status) {
             return status;
+        }
 
         /*     printf("%dth cipher is at %p\n", i, *cipher_array); */
         /*     printf("%dth cipher description: %s\n", i,  */
@@ -489,11 +668,9 @@ srtp_err_status_t cipher_array_alloc_init(srtp_cipher_t ***ca,
 }
 
 srtp_err_status_t cipher_array_delete(srtp_cipher_t *cipher_array[],
-                                      int num_cipher)
+                                      size_t num_cipher)
 {
-    int i;
-
-    for (i = 0; i < num_cipher; i++) {
+    for (size_t i = 0; i < num_cipher; i++) {
         srtp_cipher_dealloc(cipher_array[i]);
     }
 
@@ -515,38 +692,43 @@ srtp_err_status_t cipher_array_delete(srtp_cipher_t *cipher_array[],
  */
 
 uint64_t cipher_array_bits_per_second(srtp_cipher_t *cipher_array[],
-                                      int num_cipher,
-                                      unsigned octets_in_buffer,
-                                      int num_trials)
+                                      size_t num_cipher,
+                                      size_t octets_in_buffer,
+                                      size_t num_trials)
 {
-    int i;
     v128_t nonce;
     clock_t timer;
-    unsigned char *enc_buf;
-    int cipher_index = srtp_cipher_rand_u32_for_tests() % num_cipher;
+    uint8_t *enc_buf;
+
+    /* Constrain the number of ciphers */
+    if (num_cipher > UINT32_MAX) {
+        num_cipher = UINT32_MAX;
+    }
+    size_t cipher_index = srtp_cipher_rand_u32_for_tests() % num_cipher;
 
     /* Over-alloc, for NIST CBC padding */
     enc_buf = srtp_crypto_alloc(octets_in_buffer + 17);
-    if (enc_buf == NULL)
+    if (enc_buf == NULL) {
         return 0; /* indicate bad parameters by returning null */
+    }
 
     /* time repeated trials */
     v128_set_to_zero(&nonce);
     timer = clock();
-    for (i = 0; i < num_trials; i++, nonce.v32[3] = i) {
+    for (size_t i = 0; i < num_trials; i++, nonce.v32[3] = (uint32_t)i) {
         /* length parameter to srtp_cipher_encrypt is in/out -- out is total,
          * padded
          * length -- so reset it each time. */
-        unsigned octets_to_encrypt = octets_in_buffer;
+        size_t octets_to_encrypt = octets_in_buffer;
 
         /* encrypt buffer with cipher */
         srtp_cipher_set_iv(cipher_array[cipher_index], (uint8_t *)&nonce,
                            srtp_direction_encrypt);
         srtp_cipher_encrypt(cipher_array[cipher_index], enc_buf,
-                            &octets_to_encrypt);
+                            octets_to_encrypt, enc_buf, &octets_to_encrypt);
 
         /* choose a cipher at random from the array*/
-        cipher_index = (*((uint32_t *)enc_buf)) % num_cipher;
+        cipher_index = (*((size_t *)enc_buf)) % num_cipher;
     }
     timer = clock() - timer;
 
@@ -560,25 +742,25 @@ uint64_t cipher_array_bits_per_second(srtp_cipher_t *cipher_array[],
     return (uint64_t)CLOCKS_PER_SEC * num_trials * 8 * octets_in_buffer / timer;
 }
 
-void cipher_array_test_throughput(srtp_cipher_t *ca[], int num_cipher)
+void cipher_array_test_throughput(srtp_cipher_t *ca[], size_t num_cipher)
 {
-    int i;
-    int min_enc_len = 16;
-    int max_enc_len = 2048; /* should be a power of two */
-    int num_trials = 1000000;
+    size_t min_enc_len = 16;
+    size_t max_enc_len = 2048; /* should be a power of two */
+    size_t num_trials = 1000000;
 
-    printf("timing %s throughput with key length %d, array size %d:\n",
+    printf("timing %s throughput with key length %zu, array size %zu:\n",
            (ca[0])->type->description, (ca[0])->key_len, num_cipher);
     fflush(stdout);
-    for (i = min_enc_len; i <= max_enc_len; i = i * 4)
-        printf("msg len: %d\tgigabits per second: %f\n", i,
+    for (size_t i = min_enc_len; i <= max_enc_len; i = i * 4) {
+        printf("msg len: %zd\tgigabits per second: %f\n", i,
                cipher_array_bits_per_second(ca, num_cipher, i, num_trials) /
                    1e9);
+    }
 }
 
 srtp_err_status_t cipher_driver_test_array_throughput(srtp_cipher_type_t *ct,
-                                                      int klen,
-                                                      int num_cipher)
+                                                      size_t klen,
+                                                      size_t num_cipher)
 {
     srtp_cipher_t **ca = NULL;
     srtp_err_status_t status;

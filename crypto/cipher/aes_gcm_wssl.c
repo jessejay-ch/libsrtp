@@ -1,9 +1,9 @@
 /*
- * aes_gcm_mbedtls.c
+ * aes_gcm_wssl.c
  *
- * AES Galois Counter Mode
+ * AES Galois Counter Mode using wolfSSL
  *
- * YongCheng Yang
+ * Sean Parkinson, wolfSSL
  *
  */
 
@@ -46,7 +46,11 @@
 #ifdef HAVE_CONFIG_H
 #include <config.h>
 #endif
-#include <mbedtls/gcm.h>
+#ifndef WOLFSSL_USER_SETTINGS
+#include <wolfssl/options.h>
+#endif
+#include <wolfssl/wolfcrypt/settings.h>
+#include <wolfssl/wolfcrypt/aes.h>
 #include "aes_gcm.h"
 #include "alloc.h"
 #include "err.h" /* for srtp_debug */
@@ -55,8 +59,8 @@
 #include "cipher_test_cases.h"
 
 srtp_debug_module_t srtp_mod_aes_gcm = {
-    false,            /* debugging is off by default */
-    "aes gcm mbedtls" /* printable module name       */
+    0,             /* debugging is off by default */
+    "aes gcm wssl" /* printable module name       */
 };
 
 /**
@@ -85,88 +89,10 @@ srtp_debug_module_t srtp_mod_aes_gcm = {
  * For now we only support 8 and 16 octet tags.  The spec allows for
  * optional 12 byte tag, which may be supported in the future.
  */
-#define GCM_IV_LEN 12
-#define GCM_AUTH_TAG_LEN 16
+#define GCM_AUTH_TAG_LEN AES_BLOCK_SIZE
 #define GCM_AUTH_TAG_LEN_8 8
 
 #define FUNC_ENTRY() debug_print(srtp_mod_aes_gcm, "%s entry", __func__);
-
-/*
- * static function declarations.
- */
-static srtp_err_status_t srtp_aes_gcm_mbedtls_alloc(srtp_cipher_t **c,
-                                                    size_t key_len,
-                                                    size_t tlen);
-
-static srtp_err_status_t srtp_aes_gcm_mbedtls_dealloc(srtp_cipher_t *c);
-
-static srtp_err_status_t srtp_aes_gcm_mbedtls_context_init(void *cv,
-                                                           const uint8_t *key);
-
-static srtp_err_status_t srtp_aes_gcm_mbedtls_set_iv(
-    void *cv,
-    uint8_t *iv,
-    srtp_cipher_direction_t direction);
-
-static srtp_err_status_t srtp_aes_gcm_mbedtls_set_aad(void *cv,
-                                                      const uint8_t *aad,
-                                                      size_t aad_len);
-
-static srtp_err_status_t srtp_aes_gcm_mbedtls_encrypt(void *cv,
-                                                      const uint8_t *src,
-                                                      size_t src_len,
-                                                      uint8_t *dst,
-                                                      size_t *dst_len);
-
-static srtp_err_status_t srtp_aes_gcm_mbedtls_decrypt(void *cv,
-                                                      const uint8_t *src,
-                                                      size_t src_len,
-                                                      uint8_t *dst,
-                                                      size_t *dst_len);
-
-/*
- * Name of this crypto engine
- */
-static const char srtp_aes_gcm_128_mbedtls_description[] =
-    "AES-128 GCM using mbedtls";
-static const char srtp_aes_gcm_256_mbedtls_description[] =
-    "AES-256 GCM using mbedtls";
-
-/*
- * This is the vector function table for this crypto engine.
- */
-/* clang-format off */
-const srtp_cipher_type_t srtp_aes_gcm_128 = {
-    srtp_aes_gcm_mbedtls_alloc,
-    srtp_aes_gcm_mbedtls_dealloc,
-    srtp_aes_gcm_mbedtls_context_init,
-    srtp_aes_gcm_mbedtls_set_aad,
-    srtp_aes_gcm_mbedtls_encrypt,
-    srtp_aes_gcm_mbedtls_decrypt,
-    srtp_aes_gcm_mbedtls_set_iv,
-    srtp_aes_gcm_128_mbedtls_description,
-    &srtp_aes_gcm_128_test_case_0,
-    SRTP_AES_GCM_128
-};
-/* clang-format on */
-
-/*
- * This is the vector function table for this crypto engine.
- */
-/* clang-format off */
-const srtp_cipher_type_t srtp_aes_gcm_256 = {
-    srtp_aes_gcm_mbedtls_alloc,
-    srtp_aes_gcm_mbedtls_dealloc,
-    srtp_aes_gcm_mbedtls_context_init,
-    srtp_aes_gcm_mbedtls_set_aad,
-    srtp_aes_gcm_mbedtls_encrypt,
-    srtp_aes_gcm_mbedtls_decrypt,
-    srtp_aes_gcm_mbedtls_set_iv,
-    srtp_aes_gcm_256_mbedtls_description,
-    &srtp_aes_gcm_256_test_case_0,
-    SRTP_AES_GCM_256
-};
-/* clang-format on */
 
 /*
  * This function allocates a new instance of this crypto engine.
@@ -175,7 +101,7 @@ const srtp_cipher_type_t srtp_aes_gcm_256 = {
  * key length includes the 14 byte salt value that is used when
  * initializing the KDF.
  */
-static srtp_err_status_t srtp_aes_gcm_mbedtls_alloc(srtp_cipher_t **c,
+static srtp_err_status_t srtp_aes_gcm_wolfssl_alloc(srtp_cipher_t **c,
                                                     size_t key_len,
                                                     size_t tlen)
 {
@@ -211,16 +137,7 @@ static srtp_err_status_t srtp_aes_gcm_mbedtls_alloc(srtp_cipher_t **c,
         *c = NULL;
         return (srtp_err_status_alloc_fail);
     }
-
-    gcm->ctx =
-        (mbedtls_gcm_context *)srtp_crypto_alloc(sizeof(mbedtls_gcm_context));
-    if (gcm->ctx == NULL) {
-        srtp_crypto_free(gcm);
-        srtp_crypto_free(*c);
-        *c = NULL;
-        return srtp_err_status_alloc_fail;
-    }
-    mbedtls_gcm_init(gcm->ctx);
+    gcm->ctx = NULL;
 
     /* set pointers */
     (*c)->state = gcm;
@@ -250,14 +167,16 @@ static srtp_err_status_t srtp_aes_gcm_mbedtls_alloc(srtp_cipher_t **c,
 /*
  * This function deallocates a GCM session
  */
-static srtp_err_status_t srtp_aes_gcm_mbedtls_dealloc(srtp_cipher_t *c)
+static srtp_err_status_t srtp_aes_gcm_wolfssl_dealloc(srtp_cipher_t *c)
 {
     srtp_aes_gcm_ctx_t *ctx;
     FUNC_ENTRY();
     ctx = (srtp_aes_gcm_ctx_t *)c->state;
-    if (ctx) {
-        mbedtls_gcm_free(ctx->ctx);
-        srtp_crypto_free(ctx->ctx);
+    if (ctx != NULL) {
+        if (ctx->ctx != NULL) {
+            wc_AesFree(ctx->ctx);
+            srtp_crypto_free(ctx->ctx);
+        }
         /* zeroize the key material */
         octet_string_set_to_zero(ctx, sizeof(srtp_aes_gcm_ctx_t));
         srtp_crypto_free(ctx);
@@ -269,19 +188,20 @@ static srtp_err_status_t srtp_aes_gcm_mbedtls_dealloc(srtp_cipher_t *c)
     return (srtp_err_status_ok);
 }
 
-static srtp_err_status_t srtp_aes_gcm_mbedtls_context_init(void *cv,
+static srtp_err_status_t srtp_aes_gcm_wolfssl_context_init(void *cv,
                                                            const uint8_t *key)
 {
     FUNC_ENTRY();
     srtp_aes_gcm_ctx_t *c = (srtp_aes_gcm_ctx_t *)cv;
-    uint32_t key_len_in_bits;
-    int errCode = 0;
+    int err;
+
     c->dir = srtp_direction_any;
+#ifndef WOLFSSL_AESGCM_STREAM
     c->aad_size = 0;
+#endif
 
     debug_print(srtp_mod_aes_gcm, "key:  %s",
                 srtp_octet_string_hex_string(key, c->key_size));
-    key_len_in_bits = (c->key_size << 3);
     switch (c->key_size) {
     case SRTP_AES_256_KEY_LEN:
     case SRTP_AES_128_KEY_LEN:
@@ -291,23 +211,39 @@ static srtp_err_status_t srtp_aes_gcm_mbedtls_context_init(void *cv,
         break;
     }
 
-    errCode =
-        mbedtls_gcm_setkey(c->ctx, MBEDTLS_CIPHER_ID_AES, key, key_len_in_bits);
-    if (errCode != 0) {
-        debug_print(srtp_mod_aes_gcm, "mbedtls error code:  %d", errCode);
+    if (c->ctx == NULL) {
+        c->ctx = (Aes *)srtp_crypto_alloc(sizeof(Aes));
+        if (c->ctx == NULL) {
+            return srtp_err_status_alloc_fail;
+        }
+        err = wc_AesInit(c->ctx, NULL, INVALID_DEVID);
+        if (err < 0) {
+            srtp_crypto_free(c->ctx);
+            c->ctx = NULL;
+            debug_print(srtp_mod_aes_gcm, "wolfSSL error code:  %d", err);
+            return srtp_err_status_init_fail;
+        }
+    }
+
+    err = wc_AesGcmSetKey(c->ctx, (const unsigned char *)key, c->key_size);
+    if (err < 0) {
+        debug_print(srtp_mod_aes_gcm, "wolfSSL error code:  %d", err);
         return srtp_err_status_init_fail;
     }
 
     return (srtp_err_status_ok);
 }
 
-static srtp_err_status_t srtp_aes_gcm_mbedtls_set_iv(
+static srtp_err_status_t srtp_aes_gcm_wolfssl_set_iv(
     void *cv,
     uint8_t *iv,
     srtp_cipher_direction_t direction)
 {
     FUNC_ENTRY();
     srtp_aes_gcm_ctx_t *c = (srtp_aes_gcm_ctx_t *)cv;
+#ifdef WOLFSSL_AESGCM_STREAM
+    int err;
+#endif
 
     if (direction != srtp_direction_encrypt &&
         direction != srtp_direction_decrypt) {
@@ -316,9 +252,20 @@ static srtp_err_status_t srtp_aes_gcm_mbedtls_set_iv(
     c->dir = direction;
 
     debug_print(srtp_mod_aes_gcm, "setting iv: %s",
-                srtp_octet_string_hex_string(iv, GCM_IV_LEN));
-    c->iv_len = GCM_IV_LEN;
+                srtp_octet_string_hex_string(iv, GCM_NONCE_MID_SZ));
+#ifndef WOLFSSL_AESGCM_STREAM
+    c->iv_len = GCM_NONCE_MID_SZ;
     memcpy(c->iv, iv, c->iv_len);
+
+    c->aad_size = 0;
+#else
+    err = wc_AesGcmInit(c->ctx, NULL, 0, iv, GCM_NONCE_MID_SZ);
+    if (err < 0) {
+        debug_print(srtp_mod_aes_gcm, "wolfSSL error code:  %d", err);
+        return srtp_err_status_init_fail;
+    }
+#endif
+
     return (srtp_err_status_ok);
 }
 
@@ -330,22 +277,37 @@ static srtp_err_status_t srtp_aes_gcm_mbedtls_set_iv(
  *	aad	Additional data to process for AEAD cipher suites
  *	aad_len	length of aad buffer
  */
-static srtp_err_status_t srtp_aes_gcm_mbedtls_set_aad(void *cv,
+static srtp_err_status_t srtp_aes_gcm_wolfssl_set_aad(void *cv,
                                                       const uint8_t *aad,
                                                       size_t aad_len)
 {
     FUNC_ENTRY();
     srtp_aes_gcm_ctx_t *c = (srtp_aes_gcm_ctx_t *)cv;
+#ifdef WOLFSSL_AESGCM_STREAM
+    int err;
+#endif
 
     debug_print(srtp_mod_aes_gcm, "setting AAD: %s",
                 srtp_octet_string_hex_string(aad, aad_len));
 
+#ifndef WOLFSSL_AESGCM_STREAM
     if (aad_len + c->aad_size > MAX_AD_SIZE) {
         return srtp_err_status_bad_param;
     }
 
     memcpy(c->aad + c->aad_size, aad, aad_len);
     c->aad_size += aad_len;
+#else
+    if (c->dir == srtp_direction_encrypt) {
+        err = wc_AesGcmEncryptUpdate(c->ctx, NULL, NULL, 0, aad, aad_len);
+    } else {
+        err = wc_AesGcmDecryptUpdate(c->ctx, NULL, NULL, 0, aad, aad_len);
+    }
+    if (err < 0) {
+        debug_print(srtp_mod_aes_gcm, "wolfSSL error code:  %d", err);
+        return srtp_err_status_algo_fail;
+    }
+#endif
 
     return (srtp_err_status_ok);
 }
@@ -358,7 +320,7 @@ static srtp_err_status_t srtp_aes_gcm_mbedtls_set_aad(void *cv,
  *	buf	data to encrypt
  *	enc_len	length of encrypt buffer
  */
-static srtp_err_status_t srtp_aes_gcm_mbedtls_encrypt(void *cv,
+static srtp_err_status_t srtp_aes_gcm_wolfssl_encrypt(void *cv,
                                                       const uint8_t *src,
                                                       size_t src_len,
                                                       uint8_t *dst,
@@ -366,7 +328,7 @@ static srtp_err_status_t srtp_aes_gcm_mbedtls_encrypt(void *cv,
 {
     FUNC_ENTRY();
     srtp_aes_gcm_ctx_t *c = (srtp_aes_gcm_ctx_t *)cv;
-    int errCode = 0;
+    int err;
 
     if (c->dir != srtp_direction_encrypt) {
         return srtp_err_status_bad_param;
@@ -376,14 +338,28 @@ static srtp_err_status_t srtp_aes_gcm_mbedtls_encrypt(void *cv,
         return srtp_err_status_buffer_small;
     }
 
-    errCode = mbedtls_gcm_crypt_and_tag(c->ctx, MBEDTLS_GCM_ENCRYPT, src_len,
-                                        c->iv, c->iv_len, c->aad, c->aad_size,
-                                        src, dst, c->tag_len, dst + src_len);
-
+#ifndef WOLFSSL_AESGCM_STREAM
+    // tag must always be 16 bytes when passed to wc_AesGcmEncrypt, can truncate
+    // to c->tag_len after
+    uint8_t tag[GCM_AUTH_TAG_LEN];
+    err = wc_AesGcmEncrypt(c->ctx, dst, src, src_len, c->iv, c->iv_len, tag,
+                           sizeof(tag), c->aad, c->aad_size);
     c->aad_size = 0;
-    if (errCode != 0) {
-        debug_print(srtp_mod_aes_gcm, "mbedtls error code:  %d", errCode);
-        return srtp_err_status_bad_param;
+    if (err == 0) {
+        memcpy(dst + src_len, tag, c->tag_len);
+    }
+#else
+    err = wc_AesGcmEncryptUpdate(c->ctx, dst, src, src_len, NULL, 0);
+    if (err < 0) {
+        debug_print(srtp_mod_aes_gcm, "wolfSSL error code:  %d", err);
+        return srtp_err_status_algo_fail;
+    }
+    err = wc_AesGcmEncryptFinal(c->ctx, dst + src_len, c->tag_len);
+#endif
+    if (err < 0) {
+        debug_print(srtp_mod_aes_gcm, "wolfSSL error code:  %d", err);
+        printf("wolfSSL error code:  %d\n", err);
+        return srtp_err_status_algo_fail;
     }
 
     *dst_len = src_len + c->tag_len;
@@ -399,7 +375,7 @@ static srtp_err_status_t srtp_aes_gcm_mbedtls_encrypt(void *cv,
  *	buf	data to encrypt
  *	enc_len	length of encrypt buffer
  */
-static srtp_err_status_t srtp_aes_gcm_mbedtls_decrypt(void *cv,
+static srtp_err_status_t srtp_aes_gcm_wolfssl_decrypt(void *cv,
                                                       const uint8_t *src,
                                                       size_t src_len,
                                                       uint8_t *dst,
@@ -407,7 +383,7 @@ static srtp_err_status_t srtp_aes_gcm_mbedtls_decrypt(void *cv,
 {
     FUNC_ENTRY();
     srtp_aes_gcm_ctx_t *c = (srtp_aes_gcm_ctx_t *)cv;
-    int errCode = 0;
+    int err;
 
     if (c->dir != srtp_direction_decrypt) {
         return srtp_err_status_bad_param;
@@ -417,18 +393,30 @@ static srtp_err_status_t srtp_aes_gcm_mbedtls_decrypt(void *cv,
         return srtp_err_status_bad_param;
     }
 
-    if (*dst_len < (src_len - c->tag_len)) {
+    if (*dst_len < src_len - c->tag_len) {
         return srtp_err_status_buffer_small;
     }
 
+#ifndef WOLFSSL_AESGCM_STREAM
     debug_print(srtp_mod_aes_gcm, "AAD: %s",
                 srtp_octet_string_hex_string(c->aad, c->aad_size));
 
-    errCode = mbedtls_gcm_auth_decrypt(
-        c->ctx, (src_len - c->tag_len), c->iv, c->iv_len, c->aad, c->aad_size,
-        src + (src_len - c->tag_len), c->tag_len, src, dst);
+    err = wc_AesGcmDecrypt(c->ctx, dst, src, (src_len - c->tag_len), c->iv,
+                           c->iv_len, src + (src_len - c->tag_len), c->tag_len,
+                           c->aad, c->aad_size);
     c->aad_size = 0;
-    if (errCode != 0) {
+#else
+    err = wc_AesGcmDecryptUpdate(c->ctx, dst, src, (src_len - c->tag_len), NULL,
+                                 0);
+    if (err < 0) {
+        debug_print(srtp_mod_aes_gcm, "wolfSSL error code:  %d", err);
+        return srtp_err_status_algo_fail;
+    }
+    err =
+        wc_AesGcmDecryptFinal(c->ctx, src + (src_len - c->tag_len), c->tag_len);
+#endif
+    if (err < 0) {
+        debug_print(srtp_mod_aes_gcm, "wolfSSL error code:  %d", err);
         return srtp_err_status_auth_fail;
     }
 
@@ -436,7 +424,51 @@ static srtp_err_status_t srtp_aes_gcm_mbedtls_decrypt(void *cv,
      * Reduce the buffer size by the tag length since the tag
      * is not part of the original payload
      */
-    *dst_len = (src_len - c->tag_len);
+    *dst_len = src_len -= c->tag_len;
 
     return srtp_err_status_ok;
 }
+
+/*
+ * Name of this crypto engine
+ */
+static const char srtp_aes_gcm_128_wolfssl_description[] =
+    "AES-128 GCM using wolfssl";
+static const char srtp_aes_gcm_256_wolfssl_description[] =
+    "AES-256 GCM using wolfssl";
+
+/*
+ * This is the vector function table for this crypto engine.
+ */
+/* clang-format off */
+const srtp_cipher_type_t srtp_aes_gcm_128 = {
+    srtp_aes_gcm_wolfssl_alloc,
+    srtp_aes_gcm_wolfssl_dealloc,
+    srtp_aes_gcm_wolfssl_context_init,
+    srtp_aes_gcm_wolfssl_set_aad,
+    srtp_aes_gcm_wolfssl_encrypt,
+    srtp_aes_gcm_wolfssl_decrypt,
+    srtp_aes_gcm_wolfssl_set_iv,
+    srtp_aes_gcm_128_wolfssl_description,
+    &srtp_aes_gcm_128_test_case_0,
+    SRTP_AES_GCM_128
+};
+/* clang-format on */
+
+/*
+ * This is the vector function table for this crypto engine.
+ */
+/* clang-format off */
+const srtp_cipher_type_t srtp_aes_gcm_256 = {
+    srtp_aes_gcm_wolfssl_alloc,
+    srtp_aes_gcm_wolfssl_dealloc,
+    srtp_aes_gcm_wolfssl_context_init,
+    srtp_aes_gcm_wolfssl_set_aad,
+    srtp_aes_gcm_wolfssl_encrypt,
+    srtp_aes_gcm_wolfssl_decrypt,
+    srtp_aes_gcm_wolfssl_set_iv,
+    srtp_aes_gcm_256_wolfssl_description,
+    &srtp_aes_gcm_256_test_case_0,
+    SRTP_AES_GCM_256
+};
+/* clang-format on */
