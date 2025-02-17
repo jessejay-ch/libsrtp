@@ -61,7 +61,7 @@
 #include "cipher_test_cases.h"
 
 srtp_debug_module_t srtp_mod_aes_icm = {
-    0,             /* debugging is off by default */
+    false,         /* debugging is off by default */
     "aes icm ossl" /* printable module name       */
 };
 
@@ -108,13 +108,13 @@ srtp_debug_module_t srtp_mod_aes_icm = {
  * isn't used in counter mode.
  */
 static srtp_err_status_t srtp_aes_icm_openssl_alloc(srtp_cipher_t **c,
-                                                    int key_len,
-                                                    int tlen)
+                                                    size_t key_len,
+                                                    size_t tlen)
 {
     srtp_aes_icm_ctx_t *icm;
     (void)tlen;
 
-    debug_print(srtp_mod_aes_icm, "allocating cipher with key length %d",
+    debug_print(srtp_mod_aes_icm, "allocating cipher with key length %zu",
                 key_len);
 
     /*
@@ -298,23 +298,33 @@ static srtp_err_status_t srtp_aes_icm_openssl_set_iv(
  *	enc_len	length of encrypt buffer
  */
 static srtp_err_status_t srtp_aes_icm_openssl_encrypt(void *cv,
-                                                      unsigned char *buf,
-                                                      unsigned int *enc_len)
+                                                      const uint8_t *src,
+                                                      size_t src_len,
+                                                      uint8_t *dst,
+                                                      size_t *dst_len)
 {
     srtp_aes_icm_ctx_t *c = (srtp_aes_icm_ctx_t *)cv;
     int len = 0;
 
     debug_print(srtp_mod_aes_icm, "rs0: %s", v128_hex_string(&c->counter));
 
-    if (!EVP_EncryptUpdate(c->ctx, buf, &len, buf, *enc_len)) {
-        return srtp_err_status_cipher_fail;
+    if (dst_len == NULL) {
+        return srtp_err_status_bad_param;
     }
-    *enc_len = len;
 
-    if (!EVP_EncryptFinal_ex(c->ctx, buf + len, &len)) {
+    if (*dst_len < src_len) {
+        return srtp_err_status_buffer_small;
+    }
+
+    if (!EVP_EncryptUpdate(c->ctx, dst, &len, src, (int)src_len)) {
         return srtp_err_status_cipher_fail;
     }
-    *enc_len += len;
+    *dst_len = len;
+
+    if (!EVP_EncryptFinal_ex(c->ctx, dst + len, &len)) {
+        return srtp_err_status_cipher_fail;
+    }
+    *dst_len += len;
 
     return srtp_err_status_ok;
 }
@@ -341,7 +351,6 @@ const srtp_cipher_type_t srtp_aes_icm_128 = {
     srtp_aes_icm_openssl_encrypt,         /* */
     srtp_aes_icm_openssl_encrypt,         /* */
     srtp_aes_icm_openssl_set_iv,          /* */
-    0,                                    /* get_tag */
     srtp_aes_icm_128_openssl_description, /* */
     &srtp_aes_icm_128_test_case_0,        /* */
     SRTP_AES_ICM_128                      /* */
@@ -359,7 +368,6 @@ const srtp_cipher_type_t srtp_aes_icm_192 = {
     srtp_aes_icm_openssl_encrypt,         /* */
     srtp_aes_icm_openssl_encrypt,         /* */
     srtp_aes_icm_openssl_set_iv,          /* */
-    0,                                    /* get_tag */
     srtp_aes_icm_192_openssl_description, /* */
     &srtp_aes_icm_192_test_case_0,        /* */
     SRTP_AES_ICM_192                      /* */
@@ -377,7 +385,6 @@ const srtp_cipher_type_t srtp_aes_icm_256 = {
     srtp_aes_icm_openssl_encrypt,         /* */
     srtp_aes_icm_openssl_encrypt,         /* */
     srtp_aes_icm_openssl_set_iv,          /* */
-    0,                                    /* get_tag */
     srtp_aes_icm_256_openssl_description, /* */
     &srtp_aes_icm_256_test_case_0,        /* */
     SRTP_AES_ICM_256                      /* */

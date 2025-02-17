@@ -51,7 +51,6 @@
 #include "srtp.h"
 #include "rdbx.h"
 #include "rdb.h"
-#include "integers.h"
 #include "cipher.h"
 #include "auth.h"
 #include "aes.h"
@@ -79,25 +78,6 @@ typedef struct srtp_stream_list_ctx_t_ *srtp_stream_list_t;
 srtp_stream_t srtp_get_stream(srtp_t srtp, uint32_t ssrc);
 
 /*
- * srtp_stream_init_keys(s, k) (re)initializes the srtp_stream_t s by
- * deriving all of the needed keys using the KDF and the key k.
- */
-srtp_err_status_t srtp_stream_init_keys(srtp_stream_ctx_t *srtp,
-                                        srtp_master_key_t *master_key,
-                                        const unsigned int current_mki_index);
-
-/*
- * srtp_stream_init_all_master_keys(s, k, m) (re)initializes the srtp_stream_t s
- * by deriving all of the needed keys for all the master keys using the KDF and
- * the keys from k.
- */
-srtp_err_status_t srtp_steam_init_all_master_keys(
-    srtp_stream_ctx_t *srtp,
-    unsigned char *key,
-    srtp_master_key_t **keys,
-    const unsigned int max_master_keys);
-
-/*
  * libsrtp internal datatypes
  */
 typedef enum direction_t {
@@ -120,7 +100,6 @@ typedef struct srtp_session_keys_t {
     uint8_t salt[SRTP_AEAD_SALT_LEN];
     uint8_t c_salt[SRTP_AEAD_SALT_LEN];
     uint8_t *mki_id;
-    unsigned int mki_size;
     srtp_key_limit_ctx_t *limit;
 } srtp_session_keys_t;
 
@@ -134,24 +113,18 @@ typedef struct srtp_session_keys_t {
 typedef struct srtp_stream_ctx_t_ {
     uint32_t ssrc;
     srtp_session_keys_t *session_keys;
-    unsigned int num_master_keys;
+    size_t num_master_keys;
+    bool use_mki;
+    size_t mki_size;
     srtp_rdbx_t rtp_rdbx;
     srtp_sec_serv_t rtp_services;
     srtp_rdb_t rtcp_rdb;
     srtp_sec_serv_t rtcp_services;
     direction_t direction;
-    int allow_repeat_tx;
-    int *enc_xtn_hdr;
-    int enc_xtn_hdr_count;
+    bool allow_repeat_tx;
+    uint8_t *enc_xtn_hdr;
+    size_t enc_xtn_hdr_count;
     uint32_t pending_roc;
-    /*
-    The next and prev pointers are here to allow for a stream list to be
-    implemented as an intrusive doubly-linked list (the former being the
-    default).  Other stream list implementations can ignore these fields or use
-    them for some other purpose specific to the stream list implementation.
-    */
-    struct srtp_stream_ctx_t_ *next;
-    struct srtp_stream_ctx_t_ *prev;
 } strp_stream_ctx_t_;
 
 /*

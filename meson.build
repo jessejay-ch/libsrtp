@@ -1,4 +1,4 @@
-project('libsrtp2', 'c', version: '2.6.0',
+project('libsrtp3', 'c', version: '3.0.0',
   meson_version: '>= 0.52.0',
   default_options: ['buildtype=debugoptimized'])
 
@@ -7,7 +7,7 @@ soversion = 1
 cc = meson.get_compiler('c')
 host_system = host_machine.system()
 
-srtp2_deps = []
+srtp3_deps = []
 syslibs = []
 
 if host_system == 'windows'
@@ -120,12 +120,14 @@ if get_option('debug-logging')
 endif
 
 use_openssl = false
+use_wolfssl = false
 use_nss = false
+use_mbedtls = false
 
 crypto_library = get_option('crypto-library')
 if crypto_library == 'openssl'
-  openssl_dep = dependency('openssl', version: '>= 1.1.0', required: true)
-  srtp2_deps += [openssl_dep]
+  openssl_dep = dependency('openssl', required: true)
+  srtp3_deps += [openssl_dep]
   cdata.set('GCM', true)
   cdata.set('OPENSSL', true)
   cdata.set('USE_EXTERNAL_CRYPTO', true)
@@ -141,9 +143,25 @@ if crypto_library == 'openssl'
   elif get_option('crypto-library-kdf').enabled()
     error('KDF support has been enabled, but OpenSSL does not provide it')
   endif
+elif crypto_library == 'wolfssl'
+  wolfssl_dep = dependency('wolfssl', version: '>= 5.7.0', required: true)
+  srtp3_deps += [wolfssl_dep]
+  cdata.set('GCM', true)
+  cdata.set('WOLFSSL', true)
+  cdata.set('USE_EXTERNAL_CRYPTO', true)
+  use_wolfssl = true
+  if (
+    wolfssl_dep.type_name() != 'internal' and
+    not get_option('crypto-library-kdf').disabled() and
+    cc.has_function('wc_SRTCP_KDF', dependencies: wolfssl_dep)
+  )
+    cdata.set('WOLFSSL_KDF', true)
+  elif get_option('crypto-library-kdf').enabled()
+    error('KDF support has been enabled, but wolfSSL does not provide it')
+  endif
 elif crypto_library == 'nss'
   nss_dep = dependency('nss', version: '>= 1.0.1', required: true)
-  srtp2_deps += [nss_dep]
+  srtp3_deps += [nss_dep]
   cdata.set('GCM', true)
   cdata.set('NSS', true)
   cdata.set('USE_EXTERNAL_CRYPTO', true)
@@ -151,6 +169,20 @@ elif crypto_library == 'nss'
   # TODO(RLB): Use NSS for KDF
   if get_option('crypto-library-kdf').enabled()
     error('KDF support has not been implemented for NSS')
+  endif
+elif crypto_library == 'mbedtls'
+  mbedtls_dep = dependency('mbedcrypto', required: false)
+  if not mbedtls_dep.found()
+    mbedtls_dep = cc.find_library('mbedcrypto', has_headers: ['mbedtls/aes.h'], required: true)
+  endif
+  srtp3_deps += [mbedtls_dep]
+  cdata.set('GCM', true)
+  cdata.set('MBEDTLS', true)
+  cdata.set('USE_EXTERNAL_CRYPTO', true)
+  use_mbedtls = true
+  # TODO(RLB): Use NSS for KDF
+  if get_option('crypto-library-kdf').enabled()
+    error('KDF support has not been implemented for mbedtls')
   endif
 endif
 
@@ -184,10 +216,20 @@ if use_openssl
     'crypto/cipher/aes_icm_ossl.c',
     'crypto/cipher/aes_gcm_ossl.c',
   )
+elif use_wolfssl
+  ciphers_sources += files(
+    'crypto/cipher/aes_icm_wssl.c',
+    'crypto/cipher/aes_gcm_wssl.c',
+  )
 elif use_nss
   ciphers_sources += files(
     'crypto/cipher/aes_icm_nss.c',
     'crypto/cipher/aes_gcm_nss.c',
+  )
+elif use_mbedtls
+  ciphers_sources += files(
+    'crypto/cipher/aes_icm_mbedtls.c',
+    'crypto/cipher/aes_gcm_mbedtls.c',
   )
 else
   ciphers_sources += files(
@@ -206,9 +248,17 @@ if use_openssl
   hashes_sources += files(
     'crypto/hash/hmac_ossl.c',
   )
+elif use_wolfssl
+  hashes_sources += files(
+    'crypto/hash/hmac_wssl.c',
+  )
 elif use_nss
   hashes_sources += files(
     'crypto/hash/hmac_nss.c',
+  )
+elif use_mbedtls
+  hashes_sources += files(
+    'crypto/hash/hmac_mbedtls.c',
   )
 else
   hashes_sources += files(
@@ -239,45 +289,44 @@ public_headers = files(
   'crypto/include/cipher.h',
   'crypto/include/crypto_types.h',
 )
-install_headers(public_headers, subdir : 'srtp2')
+install_headers(public_headers, subdir : 'srtp3')
 
 config_incs = include_directories('.')
 crypto_incs = include_directories('crypto/include')
-srtp2_incs = include_directories('include')
+srtp3_incs = include_directories('include')
 test_incs = include_directories('test')
 
 default_library = get_option('default_library')
 
-libsrtp2_static = static_library('srtp2', sources, ciphers_sources, hashes_sources,
+libsrtp3_static = static_library('srtp3', sources, ciphers_sources, hashes_sources,
   kernel_sources, math_sources, replay_sources,
-  dependencies: [srtp2_deps, syslibs],
-  include_directories: [crypto_incs, srtp2_incs],
+  dependencies: [srtp3_deps, syslibs],
+  include_directories: [crypto_incs, srtp3_incs],
   install: default_library != 'shared')
 
 if default_library != 'static'
-  libsrtp2 = shared_library('srtp2',
-    dependencies: [srtp2_deps, syslibs],
+  libsrtp3 = shared_library('srtp3',
     soversion : soversion,
     vs_module_defs: 'srtp.def',
-    link_whole: libsrtp2_static,
+    link_whole: libsrtp3_static,
     install: true)
 else
-  libsrtp2 = libsrtp2_static
+  libsrtp3 = libsrtp3_static
 endif
 
-subdir('include/srtp2') # copies public_headers into the builddir
+subdir('include/srtp3') # copies public_headers into the builddir
 public_incs = include_directories('include') # sets public_incs
 
-libsrtp2_dep = declare_dependency(link_with: libsrtp2,
+libsrtp3_dep = declare_dependency(link_with: libsrtp3,
   include_directories: public_incs)
 
 if not get_option('tests').disabled()
   # Tests use non-public API, and when building on Windows the only symbols we
   # export are those in srtp.def, so link to the static library in that case.
   if host_system == 'windows'
-    libsrtp2_for_tests = libsrtp2_static
+    libsrtp3_for_tests = libsrtp3_static
   else
-    libsrtp2_for_tests = libsrtp2
+    libsrtp3_for_tests = libsrtp3
   endif
   subdir('crypto/test')
   subdir('test')
@@ -292,7 +341,7 @@ if not get_option('doc').disabled()
 endif
 
 pkgconfig = import('pkgconfig')
-pkgconfig.generate(libsrtp2,
+pkgconfig.generate(libsrtp3,
   filebase: meson.project_name(),
   name: meson.project_name(),
   version: meson.project_version(),

@@ -46,20 +46,14 @@
 #ifndef DATATYPES_H
 #define DATATYPES_H
 
-#include "integers.h" /* definitions of uint32_t, et cetera   */
-#include "alloc.h"
-
-#include <stdarg.h>
-
-#include <stdio.h>
+#include <inttypes.h>
+#include <stdbool.h>
 #include <string.h>
 #include <time.h>
 #ifdef HAVE_NETINET_IN_H
 #include <netinet/in.h>
 #elif defined HAVE_WINSOCK2_H
 #include <winsock2.h>
-#else
-#error "Platform not recognized"
 #endif
 
 #if defined(__SSE2__)
@@ -68,6 +62,11 @@
 
 #ifdef __cplusplus
 extern "C" {
+#endif
+
+#if defined(_WIN32) || defined(WIN32)
+#include <BaseTsd.h>
+typedef SSIZE_T ssize_t;
 #endif
 
 typedef union {
@@ -79,7 +78,7 @@ typedef union {
 
 #define MAX_PRINT_STRING_LEN 1024
 
-char *srtp_octet_string_hex_string(const void *str, int length);
+char *srtp_octet_string_hex_string(const void *str, size_t length);
 
 char *v128_bit_string(v128_t *x);
 
@@ -87,7 +86,7 @@ char *v128_hex_string(v128_t *x);
 
 void v128_copy_octet_string(v128_t *x, const uint8_t s[16]);
 
-void v128_left_shift(v128_t *x, int shift_index);
+void v128_left_shift(v128_t *x, size_t shift_index);
 
 /*
  * the following macros define the data manipulation functions
@@ -127,15 +126,8 @@ void v128_left_shift(v128_t *x, int shift_index);
      (z)->v32[2] = (x)->v32[2] ^ (y)->v32[2],                                  \
      (z)->v32[3] = (x)->v32[3] ^ (y)->v32[3])
 
-/* ok for NO_64BIT_MATH if it can compare uint64_t's (even as structures) */
-#ifdef NO_64BIT_MATH
-#define v128_xor_eq(z, x)                                                      \
-    ((z)->v32[0] ^= (x)->v32[0], (z)->v32[1] ^= (x)->v32[1],                   \
-     (z)->v32[2] ^= (x)->v32[2], (z)->v32[3] ^= (x)->v32[3])
-#else
 #define v128_xor_eq(z, x)                                                      \
     ((z)->v64[0] ^= (x)->v64[0], (z)->v64[1] ^= (x)->v64[1])
-#endif
 
 #endif /* defined(__SSE2__) */
 
@@ -157,13 +149,13 @@ void v128_left_shift(v128_t *x, int shift_index);
     ((((x)->v32[(bit) >> 5]) &= ~((uint32_t)1 << ((bit)&31))))
 
 /*
- * srtp_octet_string_is_eq(a, b, len) returns 1 if the length len strings
- * a and b are not equal. It returns 0 otherwise. The running time of the
- * comparison depends only on len, making this safe to use for (e.g.)
+ * srtp_octet_string_equal(a, b, len) returns true if the octet strings
+ * a and b are equal. It returns false otherwise. The running time of the
+ * comparison depends only on length, making this safe to use for (e.g.)
  * verifying authentication tags.
  */
 
-int srtp_octet_string_is_eq(uint8_t *a, uint8_t *b, int len);
+bool srtp_octet_string_equal(const uint8_t *a, const uint8_t *b, size_t len);
 
 /*
  * A portable way to zero out memory as recommended by
@@ -218,14 +210,11 @@ static inline uint64_t be64_to_cpu(uint64_t v)
 {
 #if defined(__GNUC__)
     v = __builtin_bswap64(v);
-#elif defined(NO_64BIT_MATH)
-    /* use the make64 functions to do 64-bit math */
-    v = make64(htonl(low32(v)), htonl(high32(v)));
-#else  /* NO_64BIT_MATH */
+#else
     /* use the native 64-bit math */
     v = (uint64_t)((be32_to_cpu((uint32_t)(v >> 32))) |
                    (((uint64_t)be32_to_cpu((uint32_t)v)) << 32));
-#endif /* NO_64BIT_MATH */
+#endif
     return v;
 }
 
@@ -248,7 +237,7 @@ static inline uint64_t be64_to_cpu(uint64_t v)
 #define bytes_per_word 4
 
 typedef struct {
-    uint32_t length;
+    size_t length;
     uint32_t *word;
 } bitvector_t;
 
@@ -260,13 +249,13 @@ typedef struct {
 
 #define bitvector_get_length(v) (((v)->length))
 
-int bitvector_alloc(bitvector_t *v, unsigned long length);
+bool bitvector_alloc(bitvector_t *v, size_t length);
 
 void bitvector_dealloc(bitvector_t *v);
 
 void bitvector_set_to_zero(bitvector_t *x);
 
-void bitvector_left_shift(bitvector_t *x, int index);
+void bitvector_left_shift(bitvector_t *x, size_t index);
 
 #ifdef __cplusplus
 }

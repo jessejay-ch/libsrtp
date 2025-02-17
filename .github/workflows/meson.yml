@@ -1,4 +1,4 @@
-name: CMake CI
+name: Meson CI
 
 on:
   push:
@@ -19,9 +19,9 @@ jobs:
           - os: windows-latest
             crypto: openssl
           - os: windows-latest
-            crypto: wolfssl
-          - os: windows-latest
             crypto: openssl3
+          - os: windows-latest
+            crypto: wolfssl
           - os: windows-latest
             crypto: nss
           - os: windows-latest
@@ -30,17 +30,17 @@ jobs:
             crypto: openssl3
         include:
           - crypto: internal
-            cmake-crypto-enable: ""
+            meson-crypto-enable: ""
           - crypto: openssl
-            cmake-crypto-enable: "-DENABLE_OPENSSL=ON"
+            meson-crypto-enable: "-Dcrypto-library=openssl"
           - crypto: openssl3
-            cmake-crypto-enable: "-DENABLE_OPENSSL=ON"
+            meson-crypto-enable: "-Dcrypto-library=openssl"
           - crypto: wolfssl
-            cmake-crypto-enable: "-DENABLE_WOLFSSL=ON"
+            meson-crypto-enable: "-Dcrypto-library=wolfssl"
           - crypto: nss
-            cmake-crypto-enable: "-DENABLE_NSS=ON"
+            meson-crypto-enable: "-Dcrypto-library=nss"
           - crypto: mbedtls
-            cmake-crypto-enable: "-DENABLE_MBEDTLS=ON"
+            meson-crypto-enable: "-Dcrypto-library=mbedtls"
 
     runs-on: ${{ matrix.os }}
 
@@ -48,6 +48,23 @@ jobs:
       CTEST_OUTPUT_ON_FAILURE: 1
 
     steps:
+    - name: Setup Ubuntu Meson
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        sudo apt-get update
+        sudo apt-get install meson
+
+    - name: Setup macOS Meson
+      if: matrix.os == 'macos-latest'
+      run: |
+        brew install meson
+
+    - name: Setup Windows Meson & Ninja
+      if: matrix.os == 'windows-latest'
+      run: |
+        choco install ninja
+        pip3 install meson
+
     - name: Setup Ubuntu wolfSSL
       if: matrix.os == 'ubuntu-latest' && matrix.crypto == 'wolfssl'
       run: |
@@ -72,13 +89,13 @@ jobs:
 
     - name: Setup macOS OpenSSL
       if: matrix.os == 'macos-latest' && matrix.crypto == 'openssl'
-      run: echo "cmake-crypto-dir=-DOPENSSL_ROOT_DIR=$(brew --prefix openssl@1.1)" >> $GITHUB_ENV
+      run: echo "pkgconfig-crypto-dir=PKG_CONFIG_PATH=$(brew --prefix openssl@1.1)/lib/pkgconfig" >> $GITHUB_ENV
 
     - name: Setup macOS OpenSSL3
       if: matrix.os == 'macos-latest' && matrix.crypto == 'openssl3'
       run: |
         brew install openssl@3
-        echo "cmake-crypto-dir=-DOPENSSL_ROOT_DIR=$(brew --prefix openssl@3)" >> $GITHUB_ENV
+        echo "pkgconfig-crypto-dir=PKG_CONFIG_PATH=$(brew --prefix openssl@3)/lib/pkgconfig" >> $GITHUB_ENV
 
     - name: Setup macOS wolfSSL
       if: matrix.os == 'macos-latest' && matrix.crypto == 'wolfssl'
@@ -109,19 +126,19 @@ jobs:
     - uses: actions/checkout@v2
 
     - name: Create Build Environment
-      run: cmake -E make_directory ${{github.workspace}}/build
+      run: meson setup ${{github.workspace}}/build
 
-    - name: Configure CMake
+    - name: Configure Meson
       working-directory: ${{github.workspace}}/build
       shell: bash
-      run: cmake $GITHUB_WORKSPACE -DLIBSRTP_TEST_APPS=ON  ${{ matrix.cmake-crypto-enable}} ${{env.cmake-crypto-dir}}
+      run: ${{ env.pkgconfig-crypto-dir }} meson configure ${{ matrix.meson-crypto-enable }}
 
     - name: Build
       working-directory: ${{github.workspace}}/build
       shell: bash
-      run: cmake --build .
+      run: ninja
 
     - name: Test
       working-directory: ${{github.workspace}}/build
       shell: bash
-      run: ctest
+      run: meson test

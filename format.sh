@@ -7,7 +7,7 @@
 # assumes git tree is clean when reporting status
 
 if [ -z "${CLANG_FORMAT}" ]; then
-    CLANG_FORMAT=clang-format-12
+    CLANG_FORMAT=clang-format-14
 fi
 
 a=`git ls-files '*.h' '*.c'`
@@ -20,7 +20,7 @@ done
 m=`git ls-files -m`
 if [ -n "$m" ]; then
     v=`$CLANG_FORMAT -version`
-    echo "Fromatting required when checking with $v"
+    echo "Formatting required when checking with $v"
     echo
     echo "The following files required formatting:"
     for f in $m; do

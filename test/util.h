@@ -44,10 +44,46 @@
 #ifndef SRTP_TEST_UTIL_H
 #define SRTP_TEST_UTIL_H
 
+#include "srtp.h"
+
+// test check macros and functions
+void check_ok_impl(srtp_err_status_t status, const char *file, int line);
+void check_return_impl(srtp_err_status_t status,
+                       srtp_err_status_t expected,
+                       const char *file,
+                       int line);
+void check_impl(bool condition,
+                const char *file,
+                int line,
+                const char *condition_str);
+void check_buffer_equal_impl(const uint8_t *buffer1,
+                             const uint8_t *buffer2,
+                             size_t buffer_length,
+                             const char *file,
+                             int line);
+void check_overrun_impl(const uint8_t *buffer,
+                        size_t offset,
+                        size_t buffer_length,
+                        const char *file,
+                        int line);
+void overrun_check_prepare(uint8_t *buffer, size_t offset, size_t buffer_len);
+
+#define CHECK_OK(status) check_ok_impl((status), __FILE__, __LINE__)
+#define CHECK_RETURN(status, expected)                                         \
+    check_return_impl((status), (expected), __FILE__, __LINE__)
+#define CHECK(condition) check_impl((condition), __FILE__, __LINE__, #condition)
+#define CHECK_BUFFER_EQUAL(buffer1, buffer2, length)                           \
+    check_buffer_equal_impl((buffer1), (buffer2), (length), __FILE__, __LINE__)
+#define CHECK_OVERRUN(buffer, offset, length)                                  \
+    check_overrun_impl((buffer), (offset), (length), __FILE__, __LINE__)
+
 #define MAX_PRINT_STRING_LEN 1024
 
-int hex_string_to_octet_string(char *raw, char *hex, int len);
-char *octet_string_hex_string(const void *s, int length);
-int base64_string_to_octet_string(char *raw, int *pad, char *base64, int len);
+size_t hex_string_to_octet_string(uint8_t *raw, const char *hex, size_t len);
+const char *octet_string_hex_string(const uint8_t *str, size_t length);
+size_t base64_string_to_octet_string(uint8_t *raw,
+                                     int *pad,
+                                     const char *base64,
+                                     size_t len);
 
 #endif

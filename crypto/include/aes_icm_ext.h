@@ -57,11 +57,24 @@
 typedef struct {
     v128_t counter; /* holds the counter value          */
     v128_t offset;  /* initial offset value             */
-    int key_size;
+    size_t key_size;
     EVP_CIPHER_CTX *ctx;
 } srtp_aes_icm_ctx_t;
 
 #endif /* OPENSSL */
+
+#ifdef WOLFSSL
+
+#include <wolfssl/wolfcrypt/aes.h>
+typedef struct {
+    v128_t counter; /* holds the counter value          */
+    v128_t offset;  /* initial offset value             */
+    uint8_t key[SRTP_AES_256_KEY_LEN];
+    size_t key_size;
+    Aes *ctx;
+} srtp_aes_icm_ctx_t;
+
+#endif /* WOLFSSL */
 
 #ifdef MBEDTLS
 
@@ -71,7 +84,7 @@ typedef struct {
     v128_t offset;  /* initial offset value             */
     v128_t stream_block;
     size_t nc_off;
-    int key_size;
+    size_t key_size;
     mbedtls_aes_context *ctx;
 } srtp_aes_icm_ctx_t;
 
@@ -87,7 +100,7 @@ typedef struct {
 typedef struct {
     v128_t counter;
     v128_t offset;
-    int key_size;
+    size_t key_size;
     uint8_t iv[16];
     NSSInitContext *nss;
     PK11SymKey *key;

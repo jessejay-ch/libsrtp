@@ -51,6 +51,8 @@
 #include "ut_sim.h"
 #include "cipher_priv.h"
 
+#include <stdlib.h>
+
 int ut_compar(const void *a, const void *b)
 {
     uint8_t r;
@@ -65,8 +67,9 @@ void ut_init(ut_connection *utc)
     int i;
     utc->index = 0;
 
-    for (i = 0; i < UT_BUF; i++)
+    for (i = 0; i < UT_BUF; i++) {
         utc->buffer[i] = i;
+    }
 
     qsort(utc->buffer, UT_BUF, sizeof(uint32_t), ut_compar);
 
